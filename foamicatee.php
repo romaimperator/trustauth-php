@@ -7,7 +7,7 @@
  * Dependencies:
  *
  * This class depends on the Crypt/RSA phpseclib found at
- *     http://phpseclib.sourceforge.net/documentation/index.html
+ *     http://phpseclib.sourceforge.net
  *
  * There are two main structures used with this API. First is the user
  * array which consists of the following information:
