@@ -7,5 +7,5 @@ website running PHP.
 Installation
 ------------
 
-[This url](foamicate.com#server) has details on how to setup your server
+[foamicate.com#server](http://foamicate.com#server) has details on how to setup your server
 to use this library to provide support for Foamicate.
