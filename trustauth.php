@@ -1,7 +1,7 @@
 <?php
 /**
  * This class provides the methods which will allow the server to
- * authenticate with a client user using the Foamicator addon. The usage
+ * authenticate with a client user using the TrustAuth addon. The usage
  * of this library is fairly simple.
  *
  * @author Daniel Fox
@@ -16,7 +16,7 @@
  *     Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
  *     Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the
  *         documentation and/or other materials provided with the distribution.
- *     Neither the name of Foamicate nor the names of its contributors may be used to endorse or promote products derived from this software
+ *     Neither the name of TrustAuth nor the names of its contributors may be used to endorse or promote products derived from this software
  *         without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
@@ -38,7 +38,7 @@
  *          'public_key' => // the public key associated with this user
  *
  *          // The next two are needed only after the challenge is sent
- *          // and are supplied by Foamicator to you
+ *          // and are supplied by TrustAuth to you
  *          'md5'        => // the md5 hash response to the challenge
  *          'sha'        => // the sha1 hash response to the challenge
  *      );
@@ -55,10 +55,10 @@
  *
  * Usage:
  *
- * 1. To get the challenge message to reply to the Foamicator addon with
+ * 1. To get the challenge message to reply to the TrustAuth addon with
  *    call the get_challenge function with the user array like so:
  *
- *      $result = Foamicatee::get_challenge(array(
+ *      $result = TrustAuth::get_challenge(array(
  *          'random'     => $user_random,
  *          'public_key' => $public_key,
  *      ));
@@ -69,20 +69,20 @@
  *          'status' => // true if the function was successful false
  *                      // otherwise
  *          'json'   => // a json encoded string that should be returned
- *                      // to the Foamicator addon
+ *                      // to the TrustAuth addon
  *          'server' => // the array of information to save for the
  *                      // second function call
  *      );
  *
  * 2. After saving the server array return the json string.
  *
- * 3. When Foamicator replies with the answer to the challenge add the
+ * 3. When TrustAuth replies with the answer to the challenge add the
  *    hashes to the user array should call the authenticate function like
  *    so:
  *
  *    $user['md5'] = $_POST['hashes']['md5'];
  *    $uesr['sha'] = $_POST['hashes']['sha'];
- *    $result = Foamicatee::authenticate($user, $result['server']);
+ *    $result = TrustAuth::authenticate($user, $result['server']);
  *
  *    The function returns an array similar to the first:
  *
@@ -90,13 +90,13 @@
  *          'status' => // true if the user was authenticated false
  *                      // otherwise
  *          'json'   => // a json encoded string that should be returned
- *                      // to the Foamicator addon
+ *                      // to the TrustAuth addon
  *      );
  *
  * 4. No matter whether the authentication was successful or not, the
  *    json string should still be returned to the addon. It will tell the
  *    addon if the authentication was successful or not. If it wasn't,
- *    Foamicator alerts the user and she can attempt to login again.
+ *    TrustAuth alerts the user and she can attempt to login again.
  *
  * NOTE:
  *    If either function did not receive the required parameters they
@@ -144,9 +144,9 @@
 
 require_once('Crypt/RSA.php');
 
-class Foamicatee
+class TrustAuth
 {
-    // These status codes are used to let Foamicator (the addon) know
+    // These status codes are used to let TrustAuth (the addon) know
     // what happened.
     protected static $status = array(
         'auth'          => 0,
@@ -207,7 +207,7 @@ class Foamicatee
     public static function wrong_stage() {
         return array(
             'status' => true,
-            'json'   => json_encode(array('status' => Foamicatee::$status['stage_fail'], 'error' => 'Wrong stage of logging in.')),
+            'json'   => json_encode(array('status' => TrustAuth::$status['stage_fail'], 'error' => 'Wrong stage of logging in.')),
         );
     }
 
@@ -224,15 +224,15 @@ class Foamicatee
             return false;
         }
 
-        $user['public_key'] = Foamicatee::fix_key($user['public_key']);
+        $user['public_key'] = TrustAuth::fix_key($user['public_key']);
 
         // Load the key into the engine
         $rsa = new Crypt_RSA();
         $rsa->loadKey($user['public_key']);
         $rsa->setEncryptionMode(CRYPT_RSA_ENCRYPTION_PKCS1);
 
-        $pre_master_secret = Foamicatee::get_pre_master_secret();
-        $server_random     = Foamicatee::get_server_random();
+        $pre_master_secret = TrustAuth::get_pre_master_secret();
+        $server_random     = TrustAuth::get_server_random();
 
         // Encrypt the pre_master_secret and convert it to hex
         $encrypted_secret = bin2hex($rsa->encrypt($pre_master_secret));
@@ -241,7 +241,7 @@ class Foamicatee
         // Encode the encrypted secret as json
         return array(
             'status' => true,
-            'json'   => json_encode(array('secret' => $encrypted_secret, 'random' => $encrypted_random, 'status' => Foamicatee::$status['auth'])),
+            'json'   => json_encode(array('secret' => $encrypted_secret, 'random' => $encrypted_random, 'status' => TrustAuth::$status['auth'])),
             'server' => array('random' => $server_random, 'pre_master_secret' => $pre_master_secret),
         );
     }
@@ -266,7 +266,7 @@ class Foamicatee
             return false;
         }
 
-        $user['public_key'] = Foamicatee::fix_key($user['public_key']);
+        $user['public_key'] = TrustAuth::fix_key($user['public_key']);
 
         // Load the key into the engine
         $rsa = new Crypt_RSA();
@@ -278,24 +278,24 @@ class Foamicatee
         $user_sha = bin2hex($rsa->decrypt(pack('H*', $user['sha'])));
 
         // Generate the master secret
-        $master_secret        = Foamicatee::get_master_secret($server['pre_master_secret'], $user['random'], $server['random']);
-        $transmitted_messages = Foamicatee::get_transmitted_messages($user['random'], $master_secret, $server['random']);
+        $master_secret        = TrustAuth::get_master_secret($server['pre_master_secret'], $user['random'], $server['random']);
+        $transmitted_messages = TrustAuth::get_transmitted_messages($user['random'], $master_secret, $server['random']);
 
         // Calculate the expected hashes from the client
-        $md5_hash = Foamicatee::get_md5_hash($master_secret, $user['random'], $server['random'], $transmitted_messages);
-        $sha_hash = Foamicatee::get_sha_hash($master_secret, $user['random'], $server['random'], $transmitted_messages);
+        $md5_hash = TrustAuth::get_md5_hash($master_secret, $user['random'], $server['random'], $transmitted_messages);
+        $sha_hash = TrustAuth::get_sha_hash($master_secret, $user['random'], $server['random'], $transmitted_messages);
 
         // If the hashes match then set the successful login session secret
         if ($md5_hash === $user_md5 && $sha_hash === $user_sha) {
             return array(
                 'status' => true,
-                'json' => json_encode(array('url' => $success_url, 'status' => Foamicatee::$status['logged_in'])),
+                'json' => json_encode(array('url' => $success_url, 'status' => TrustAuth::$status['logged_in'])),
             );
         }
         else {
             return array(
                 'status' => false,
-                'json' => json_encode(array('url' => $fail_url, 'status' => Foamicatee::$status['auth_fail'], 'error' => 'Failed to authenticate.')),
+                'json' => json_encode(array('url' => $fail_url, 'status' => TrustAuth::$status['auth_fail'], 'error' => 'Failed to authenticate.')),
             );
         }
     }
@@ -326,7 +326,7 @@ class Foamicatee
      * @return the md5 hash
      */
     protected static function get_md5_hash($master_secret, $client_random, $server_random, $transmitted_messages) {
-        return md5($master_secret . Foamicatee::$md5_pad['pad2'] .  md5($transmitted_messages . Foamicatee::SENDER_CLIENT . $master_secret . Foamicatee::$md5_pad['pad1']));
+        return md5($master_secret . TrustAuth::$md5_pad['pad2'] .  md5($transmitted_messages . TrustAuth::SENDER_CLIENT . $master_secret . TrustAuth::$md5_pad['pad1']));
     }
 
     /*
@@ -339,7 +339,7 @@ class Foamicatee
      * @return the md5 hash
      */
     protected static function get_sha_hash($master_secret, $client_random, $server_random, $transmitted_messages) {
-        return sha1($master_secret . Foamicatee::$sha_pad['pad2'] . sha1($transmitted_messages . Foamicatee::SENDER_CLIENT . $master_secret . Foamicatee::$sha_pad['pad1']));
+        return sha1($master_secret . TrustAuth::$sha_pad['pad2'] . sha1($transmitted_messages . TrustAuth::SENDER_CLIENT . $master_secret . TrustAuth::$sha_pad['pad1']));
     }
 
     /*
@@ -375,7 +375,7 @@ class Foamicatee
      */
     protected static function get_pre_master_secret() {
         // TODO: alert about not cryptographically strong value
-        return bin2hex(openssl_random_pseudo_bytes(Foamicatee::PRE_MASTER_SECRET_LENGTH));
+        return bin2hex(openssl_random_pseudo_bytes(TrustAuth::PRE_MASTER_SECRET_LENGTH));
     }
 
     /*
@@ -387,7 +387,7 @@ class Foamicatee
      */
     protected static function get_server_random() {
         $current_time = new Math_BigInteger(microtime(true) * 10000, '10');
-        return bin2hex($current_time->toBytes()) . bin2hex(openssl_random_pseudo_bytes(Foamicatee::SERVER_RANDOM_LENGTH));
+        return bin2hex($current_time->toBytes()) . bin2hex(openssl_random_pseudo_bytes(TrustAuth::SERVER_RANDOM_LENGTH));
     }
 }
 
