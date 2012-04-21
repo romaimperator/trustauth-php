@@ -146,6 +146,28 @@ require_once('Crypt/RSA.php');
 
 class TrustAuth
 {
+    /**
+     * The new method for TrustAuth authentication. This function verifies that the encrypted response matches
+     * the challenge.
+     *
+     * @param $challenge the random value used for the challenge that was saved on the server
+     * @param $response  the encrypted random value sent by the client
+     * @param $public_key the public key to use to decrypt the response with
+     * @return true if the decrypted response matches the challenge; false otherwise
+     */
+    public static function authenticate($challenge, $response, $public_key) {
+        $public_key = TrustAuth::fix_key($public_key);
+
+        // Load the key into the engine
+        $rsa = new Crypt_RSA();
+        $rsa->loadKey($public_key);
+        $rsa->setEncryptionMode(CRYPT_RSA_ENCRYPTION_PKCS1);
+
+        return ($challenge === bin2hex($rsa->decrypt(pack('H*', $response))));
+    }
+
+
+
     // These status codes are used to let TrustAuth (the addon) know
     // what happened.
     protected static $status = array(
