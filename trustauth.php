@@ -155,7 +155,7 @@ class TrustAuth
      * @param $public_key the public key to use to decrypt the response with
      * @return true if the decrypted response matches the challenge; false otherwise
      */
-    public static function authenticate($challenge, $response, $public_key) {
+    public static function verify($challenge, $response, $public_key) {
         $public_key = TrustAuth::fix_key($public_key);
 
         // Load the key into the engine
