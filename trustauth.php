@@ -146,6 +146,8 @@ require_once('Crypt/RSA.php');
 
 class TrustAuth
 {
+    const CHALLENGE_LENGTH = 64; // in bytes so default is 512 bits
+
     /**
      * The new method for TrustAuth authentication. This function verifies that the encrypted response matches
      * the challenge.
@@ -164,6 +166,16 @@ class TrustAuth
         $rsa->setEncryptionMode(CRYPT_RSA_ENCRYPTION_PKCS1);
 
         return ($challenge === bin2hex($rsa->decrypt(pack('H*', $response))));
+    }
+
+    /**
+     * Generates a random value to use as a challenge for authentication. The length is configurable with
+     * the CHALLENGE_LENGTH constant.
+     *
+     * @return random value
+     */
+    public static function challenge() {
+        return bin2hex(openssl_random_pseudo_bytes(TrustAuth::CHALLENGE_LENGTH);
     }
 
 
