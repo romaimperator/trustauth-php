@@ -175,7 +175,7 @@ class TrustAuth
      * @return random value
      */
     public static function challenge() {
-        return bin2hex(openssl_random_pseudo_bytes(TrustAuth::CHALLENGE_LENGTH);
+        return bin2hex(openssl_random_pseudo_bytes(TrustAuth::CHALLENGE_LENGTH));
     }
 
 
