@@ -146,7 +146,7 @@ require_once('Crypt/RSA.php');
 
 class TrustAuth
 {
-    const CHALLENGE_LENGTH = 32; // in bytes so default is 256 bits
+    const CHALLENGE_LENGTH = 64; // in bytes so default is 512 bits
 
     /**
      * The new method for TrustAuth authentication. This function verifies that the encrypted response matches
