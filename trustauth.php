@@ -144,9 +144,15 @@
 
 require_once('Crypt/RSA.php');
 
+define("SITE_DOMAIN", $_SERVER['SERVER_NAME']);
+
+class TrustAuthException extends Exception {}
+
 class TrustAuth
 {
     const CHALLENGE_LENGTH = 64; // in bytes so default is 512 bits
+    const HASH_LENGTH = 32; // in bytes so sha 256 returns 32 bytes
+    const TIMEOUT = 30; // the maximum length of time to still accept a challenge or response in seconds
 
     /*
      * This function is to act like a constant array and return the number
@@ -155,7 +161,7 @@ class TrustAuth
      * @param {string} $type the type of message
      * @return {int} the integer corresponding to the message type
      */
-    public static function MESSAGE_TYPE($type) {
+    private static function MESSAGE_TYPE($type) {
         $MESSAGE_TYPE = array(
             'challenge' => 0,
             'response'  => 1,
@@ -163,6 +169,23 @@ class TrustAuth
         return $MESSAGE_TYPE[$type];
     }
 
+    /*
+     * Generates the challenge message for the client addon.
+     *
+     * @param user the array of user info, public key, random
+     * @returns array of status, json return message and the server values
+     *     which will be needed later
+     */
+    public static function get_challenge() {
+        return self::pack_data(
+            self::MESSAGE_TYPE('challenge'),
+            array(
+                'challenge' => self::get_random_value(),
+                'domain'    => SITE_DOMAIN,
+                'time'      => time(),
+            )
+        );
+    }
 
     /**
      * The new method for TrustAuth authentication. This function verifies that the encrypted response matches
@@ -174,14 +197,21 @@ class TrustAuth
      * @return true if the decrypted response matches the challenge; false otherwise
      */
     public static function verify($challenge, $response, $public_key) {
-        $public_key = TrustAuth::fix_key($public_key);
+        if ( ! isset($challenge) || ! isset($response) || ! isset($public_key)) { return false; }
 
-        // Load the key into the engine
-        $rsa = new Crypt_RSA();
-        $rsa->loadKey($public_key);
-        $rsa->setEncryptionMode(CRYPT_RSA_ENCRYPTION_PKCS1);
+        $public_key = self::fix_key($public_key);
+        $challenge_data = self::unpack_data($challenge);
+        $data = self::unpack_data($response);
 
-        return ($challenge === bin2hex($rsa->decrypt(pack('H*', $response))));
+        if (self::verify_encrypted_hash($data['calculated_digest'], $data['encrypted_digest'], $public_key)) {
+          if ($data['server_hash'] != $challenge_data['hash']) { throw new TrustAuthException("Hash from client does not match expected hash."); }
+          if ($data['domain'] != SITE_DOMAIN) { throw new TrustAuthException("Client expected a different domain name."); }
+          if ($data['time'] + self::TIMEOUT < time()) { throw new TrustAuthException("Response has expired. " . $data['time'] + self::TIMEOUT . " < " . time()); }
+          if ($challenge_data['time'] + self::TIMEOUT < time()) { throw new TrustAuthException("Challenge has expired. " . $challenge_data['time'] + self::TIMEOUT . " < " . time()); }
+          return true;
+        } else {
+          return false;
+        }
     }
 
     /**
@@ -190,8 +220,8 @@ class TrustAuth
      *
      * @return random value
      */
-    public static function challenge() {
-        return bin2hex(openssl_random_pseudo_bytes(TrustAuth::CHALLENGE_LENGTH));
+    private static function get_random_value() {
+        return bin2hex(openssl_random_pseudo_bytes(self::CHALLENGE_LENGTH));
     }
 
     /**
@@ -200,7 +230,7 @@ class TrustAuth
      * @param {string} $str the string to convert
      * @return {string} the hex string result
      */
-    protected static function utf8_to_hex($str) {
+    private static function utf8_to_hex($str) {
         return str_replace("0", "", bin2hex(mb_convert_encoding($str, "8bit", "UTF-8")));
     }
 
@@ -210,7 +240,7 @@ class TrustAuth
      * @param {string} $str the string to convert
      * @return {string} the binary string result
      */
-    protected static function utf8_to_bin($str) {
+    private static function utf8_to_bin($str) {
         return mb_convert_encoding($str, "8bit", "UTF-8");
     }
 
@@ -220,162 +250,28 @@ class TrustAuth
      * @param {string} $str the string to convert
      * @return {string} the UTF-8 string result
      */
-    protected static function hex_to_utf8($str) {
+    private static function hex_to_utf8($str) {
         return mb_convert_encoding(pack("H*", $str), "UTF-8", "8bit");
     }
 
-    // These status codes are used to let TrustAuth (the addon) know
-    // what happened.
-    protected static $status = array(
-        'auth'          => 0,
-        'auth_fail'     => 1,
-        'logged_in'     => 2,
-        'stage_fail'    => 3,
-    );
 
-    const PRE_MASTER_SECRET_LENGTH = 48; // in bytes
-    const SERVER_RANDOM_LENGTH     = 28;  // in bytes
-    const SENDER_CLIENT            = '0x434C4E54';
-
-    protected static $md5_pad = array(
-        'pad1' => '363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636',
-        'pad2' => '5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c',
-    );
-    protected static $sha_pad = array(
-        'pad1' => '36363636363636363636363636363636363636363636363636363636363636363636363636363636',
-        'pad2' => '5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c5c',
-    );
-
-    /*
-     * This chunk of code creates the padding from binary and converts it to hex.
+    /**
+     * Verifies the signature of the data using the given public key.
      *
-     * @deprecated
-     * @return array of the paddings
+     * @param {hex string} $data the encoded data as a hex string
+     * @param {string} $public_key the public key to use as a PEM encoded public key
+     * @return {bool} true if the signature is valid, false otherwise
      */
-    function generate_padding() {
-        $pad_1_char = '36';
-        $pad_2_char = '5c';
-        $pad_1_md5 = "";
-        $pad_2_md5 = "";
-        $pad_1_sha = "";
-        $pad_2_sha = "";
-        for ($i = 0; $i < 48; $i++) {
-            $pad_1_md5 .= $pad_1_char;
-            $pad_2_md5 .= $pad_2_char;
-            if ($i == 39) {
-                $pad_1_sha = $pad_1_md5;
-                $pad_2_sha = $pad_2_md5;
-            }
-        }
-        $pad_1_md5 = $pad_1_md5;
-        $pad_2_md5 = $pad_2_md5;
+    private static function verify_encrypted_hash($calculated_hash, $encrypted_hash, $public_key) {
+        if (! isset($calculated_hash) || ! isset($encrypted_hash)) { return false; }
 
-        return array(
-            'md5' => array('pad1' => $pad_1_md5, 'pad2' => $pad_2_md5),
-            'sha' => array('pad1' => $pad_1_sha, 'pad2' => $pad_2_sha),
-        );
-    }
-
-    /*
-     * Returns the message for the client to indicate that it's at the wrong stage
-     * of authentication and it should retry.
-     *
-     * @return array of status, json return message
-     */
-    public static function wrong_stage() {
-        return array(
-            'status' => true,
-            'json'   => json_encode(array('status' => TrustAuth::$status['stage_fail'], 'error' => 'Wrong stage of logging in.')),
-        );
-    }
-
-    /*
-     * Generates the challenge message for the client addon.
-     *
-     * @param user the array of user info, public key, random
-     * @returns array of status, json return message and the server values
-     *     which will be needed later
-     */
-    public static function get_challenge($user) {
-        // Return error if any required parameter is missing
-        if ( ! isset($user['random']) || ! isset($user['public_key'])) {
-            return false;
-        }
-
-        $user['public_key'] = TrustAuth::fix_key($user['public_key']);
-
-        // Load the key into the engine
         $rsa = new Crypt_RSA();
-        $rsa->loadKey($user['public_key']);
+        $rsa->loadKey($public_key);
         $rsa->setEncryptionMode(CRYPT_RSA_ENCRYPTION_PKCS1);
 
-        $pre_master_secret = TrustAuth::get_pre_master_secret();
-        $server_random     = TrustAuth::get_server_random();
+        $digest = bin2hex($rsa->decrypt(pack("H*", $encrypted_hash)));
 
-        // Encrypt the pre_master_secret and convert it to hex
-        $encrypted_secret = bin2hex($rsa->encrypt($pre_master_secret));
-        $encrypted_random = bin2hex($rsa->encrypt($server_random));
-
-        // Encode the encrypted secret as json
-        return array(
-            'status' => true,
-            'json'   => json_encode(array('secret' => $encrypted_secret, 'random' => $encrypted_random, 'status' => TrustAuth::$status['auth'])),
-            'server' => array('random' => $server_random, 'pre_master_secret' => $pre_master_secret),
-        );
-    }
-
-    /*
-     *
-
-    /*
-     * Checks to see if the server hash matches the user supplied hash.
-     *
-     * @param $user array with the md5 hash, the sha hash, the user
-     *      random, the public_key
-     * @param $server array with the pre_master_secret and the random value
-     * @param success_url the url to tell the user to redirect to upon successful authentication
-     * @param fail_url the url to tell the user to redirect to upon failed authentication
-     * @return array with the status and the json return message
-     */
-    public static function authenticate($user, $server, $success_url, $fail_url) {
-        // Return error if any required parameter is missing
-        if ( ! isset($user['random']) || ! isset($user['public_key']) || ! isset($user['md5']) || ! isset($user['sha']) ||
-            ! isset($server['pre_master_secret']) || ! isset($server['random'])) {
-            return false;
-        }
-
-        $user['public_key'] = TrustAuth::fix_key($user['public_key']);
-
-        // Load the key into the engine
-        $rsa = new Crypt_RSA();
-        $rsa->loadKey($user['public_key']);
-        $rsa->setEncryptionMode(CRYPT_RSA_ENCRYPTION_PKCS1);
-
-        // Decrypt the hashes from the client
-        $user_md5 = bin2hex($rsa->decrypt(pack('H*', $user['md5'])));
-        $user_sha = bin2hex($rsa->decrypt(pack('H*', $user['sha'])));
-
-        // Generate the master secret
-        $master_secret        = TrustAuth::get_master_secret($server['pre_master_secret'], $user['random'], $server['random']);
-        $transmitted_messages = TrustAuth::get_transmitted_messages($user['random'], $master_secret, $server['random']);
-
-        // Calculate the expected hashes from the client
-        $md5_hash = TrustAuth::get_md5_hash($master_secret, $user['random'], $server['random'], $transmitted_messages);
-        $sha_hash = TrustAuth::get_sha_hash($master_secret, $user['random'], $server['random'], $transmitted_messages);
-
-        // If the hashes match then set the successful login session secret
-        if ($md5_hash === $user_md5 && $sha_hash === $user_sha) {
-            return array(
-                'status' => true,
-                'json' => json_encode(array('url' => $success_url, 'status' => TrustAuth::$status['logged_in'])),
-            );
-        }
-        else {
-            return array(
-                'status' => false,
-                'json' => json_encode(array('url' => $fail_url, 'status' => TrustAuth::$status['auth_fail'], 'error' => 'Failed to authenticate.')),
-            );
-        }
+        return $digest === $calculated_hash;
     }
 
     /*
@@ -385,87 +281,13 @@ class TrustAuth
      * @param public_key the key
      * @return the fixed key
      */
-    public static function fix_key($public_key) {
+    private static function fix_key($public_key) {
         $public_key = substr_replace($public_key, '', 0, 26);   // Remove the BEGIN PUBLIC KEY
         $public_key = substr_replace($public_key, '', -24, 24); // Remove the END PUBLIC KEY
         $public_key = str_replace(' ', '', $public_key);        // Remove spaces
         $public_key = str_replace("\r\n", '', $public_key);     // Remove line breaks
         $public_key = chunk_split($public_key, 64, "\r\n");
         return "\r\n-----BEGIN PUBLIC KEY-----\r\n" . $public_key . "-----END PUBLIC KEY-----\r\n";
-    }
-
-    /*
-     * Calculates the md5 hash to expect from the client.
-     *
-     * @param client_random the client's random value
-     * @param server_random the server's random value
-     * @param transmitted_messages the client_random,
-     *      master_secret, and server_random concatenated in this order
-     * @return the md5 hash
-     */
-    protected static function get_md5_hash($master_secret, $client_random, $server_random, $transmitted_messages) {
-        return md5($master_secret . TrustAuth::$md5_pad['pad2'] .  md5($transmitted_messages . TrustAuth::SENDER_CLIENT . $master_secret . TrustAuth::$md5_pad['pad1']));
-    }
-
-    /*
-     * Calculates the md5 hash to expect from the client.
-     *
-     * @param client_random the client's random value
-     * @param server_random the server's random value
-     * @param transmitted_messages the client_random,
-     *      master_secret, and server_random concatenated in this order
-     * @return the md5 hash
-     */
-    protected static function get_sha_hash($master_secret, $client_random, $server_random, $transmitted_messages) {
-        return sha1($master_secret . TrustAuth::$sha_pad['pad2'] . sha1($transmitted_messages . TrustAuth::SENDER_CLIENT . $master_secret . TrustAuth::$sha_pad['pad1']));
-    }
-
-    /*
-     * Calculate the master secret using server.random and client.random.
-     *
-     * @param pre_master_secret the pre_master_secret to use
-     * @param client_random  the random value from the client
-     * @param server_random  the random value from the server
-     * @return the master secret
-     */
-    protected static function get_master_secret($pre_master_secret, $client_random, $server_random) {
-        return md5($pre_master_secret . sha1('A' . $pre_master_secret . $client_random . $server_random)) .
-              md5($pre_master_secret . sha1('BB' . $pre_master_secret . $client_random . $server_random)) .
-             md5($pre_master_secret . sha1('CCC' . $pre_master_secret . $client_random . $server_random));
-    }
-
-    /*
-     * Creates the tranmitted_messages value.
-     *
-     * @param user_random the random value of the user
-     * @param server_random the random value of the server
-     * @param master_secret the master secret
-     * @return the value for transmitted_message
-     */
-    protected static function get_transmitted_messages($user_random, $master_secret, $server_random) {
-        return $user_random . $master_secret . $server_random;
-    }
-
-    /*
-     * Generates a pre_master_secret.
-     *
-     * @return the pre_master_secret
-     */
-    protected static function get_pre_master_secret() {
-        // TODO: alert about not cryptographically strong value
-        return bin2hex(openssl_random_pseudo_bytes(TrustAuth::PRE_MASTER_SECRET_LENGTH));
-    }
-
-    /*
-     * Generates the server's random value. The SERVER_RANDOM_LENGTH
-     * controls how long in bytes the random portion of the pre_master_secret
-     * is.
-     *
-     * @return server's random value
-     */
-    protected static function get_server_random() {
-        $current_time = new Math_BigInteger(microtime(true) * 10000, '10');
-        return bin2hex($current_time->toBytes()) . bin2hex(openssl_random_pseudo_bytes(TrustAuth::SERVER_RANDOM_LENGTH));
     }
 
     /**
@@ -491,13 +313,13 @@ class TrustAuth
      * @param {hash} data the data required for the message type
      * @return {string} a hex string of the packed data
      */
-    public static function pack_data($type, $data) {
+    private static function pack_data($type, $data) {
         $b = '';
-        if($type == TrustAuth::MESSAGE_TYPE('challenge')) {
+        if($type == self::MESSAGE_TYPE('challenge')) {
             $b = pack("C", $type);
             $b .= pack("N", $data['time']);
-            $encoded_challenge = TrustAuth::utf8_to_bin($data['challenge']);
-            $encoded_domain    = TrustAuth::utf8_to_bin($data['domain']);
+            $encoded_challenge = self::utf8_to_bin($data['challenge']);
+            $encoded_domain    = self::utf8_to_bin($data['domain']);
             $b .= pack("n", strlen($encoded_challenge));
             $b .= pack("n", strlen($encoded_domain));
             $b .= $encoded_challenge;
@@ -507,6 +329,10 @@ class TrustAuth
             // Unrecognized message type
         }
         return bin2hex($b);
+    }
+
+    public static function hex2bin($str) {
+      return pack("H*", $str);
     }
 
     /**
@@ -519,28 +345,75 @@ class TrustAuth
      * @param {string} $data a hex string encoded in the TrustAuth format
      * @return {hash} the decoded data
      */
-    public static function unpack_data($data) {
-        function hex2bin($str) { return pack("H*", $str); }
+    private static function unpack_data($data) {
+        $data_copy = $data;
+        $type = unpack("C", self::hex2bin(substr($data, 0, 2)));
+        if ($type[1] == self::MESSAGE_TYPE('response')) {
+            $time            = unpack("N", self::hex2bin(substr($data, 2, 8)));
+            $response_length = unpack("n", self::hex2bin(substr($data, 10, 4)));
+            $domain_length   = unpack("n", self::hex2bin(substr($data, 14, 4)));
+            $data = substr($data, 18);
 
-        $type = unpack("C", hex2bin($data, 0, 2));
-        if ($type[1] == TrustAuth::MESSAGE_TYPE('response')) {
-            $time = unpack("N", hex2bin(substr($data, 2, 8)));
-            $response_length = unpack("n", hex2bin(substr($data, 10, 4)));
-            $domain_length = unpack("n", hex2bin(substr($data, 14, 4)));
             $meta = array(
-                'time' => $time[1],
+                'time'            => $time[1],
                 'response_length' => $response_length[1],
-                'domain_length' => $domain_length[1],
+                'domain_length'   => $domain_length[1],
             );
-            $response = TrustAuth::hex_to_utf8(substr($data, 18, $meta['response_length'] * 2));
-            $domain   = TrustAuth::hex_to_utf8(substr($data, 18 + $meta['response_length'] * 2, $meta['domain_length'] * 2));
+
+            $response         = self::hex_to_utf8(substr($data, 0, $meta['response_length'] * 2));
+            $data = substr($data, $meta['response_length'] * 2);
+
+            $domain           = self::hex_to_utf8(substr($data, 0, $meta['domain_length'] * 2));
+            $data = substr($data, $meta['domain_length'] * 2);
+
+            $server_hash      = substr($data, 0, self::HASH_LENGTH * 2);
+            $data = substr($data, self::HASH_LENGTH * 2);
+
+            $digest_length    = unpack("n", self::hex2bin(substr($data, 0, 4)));
+            $encrypted_digest = substr($data, 4);
+
+            $calculated_digest = hash("sha256", substr($data_copy, 0, -$digest_length[1] - 4));
+
             return array(
-                'type' => $type[1],
-                'time' => $meta['time'],
-                'response_length' => $meta['response_length'],
-                'domain_length' => $meta['domain_length'],
-                'response' => $response,
-                'domain' => $domain,
+                'type'              => $type[1],
+                'time'              => $meta['time'],
+                'response_length'   => $meta['response_length'],
+                'domain_length'     => $meta['domain_length'],
+                'response'          => $response,
+                'domain'            => $domain,
+                'server_hash'       => $server_hash,
+                'digest_length'     => $digest_length[1],
+                'encrypted_digest'  => $encrypted_digest,
+                'calculated_digest' => $calculated_digest,
+            );
+        } elseif ($type[1] == self::MESSAGE_TYPE('challenge')) {
+            $time             = unpack("N", self::hex2bin(substr($data, 2, 8)));
+            $challenge_length = unpack("n", self::hex2bin(substr($data, 10, 4)));
+            $domain_length    = unpack("n", self::hex2bin(substr($data, 14, 4)));
+            $data = substr($data, 18);
+
+            $meta = array(
+                'time'             => $time[1],
+                'challenge_length' => $challenge_length[1],
+                'domain_length'    => $domain_length[1],
+            );
+
+            $challege = self::hex_to_utf8(substr($data, 0, $meta['challenge_length'] * 2));
+            $data = substr($data, $meta['challenge_length'] * 2);
+
+            $domain = self::hex_to_utf8(substr($data, 0, $meta['domain_length'] * 2));
+            $data = substr($data, $meta['domain_length'] * 2);
+
+            $hash = substr($data, 0, self::HASH_LENGTH * 2);
+
+            return array(
+                'type'             => $type[1],
+                'time'             => $meta['time'],
+                'challenge_length' => $meta['challenge_length'],
+                'domain_length'    => $meta['domain_length'],
+                'challege'         => $challege,
+                'domain'           => $domain,
+                'hash'             => $hash,
             );
         } else {
             return array(
@@ -549,5 +422,4 @@ class TrustAuth
         }
     }
 }
-
 ?>
