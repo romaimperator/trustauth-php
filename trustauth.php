@@ -197,7 +197,7 @@ class TrustAuth
      * @return true if the decrypted response matches the challenge; false otherwise
      */
     public static function verify($challenge, $response, $public_key) {
-        if ( ! isset($challenge) || ! isset($response) || ! isset($public_key)) { return false; }
+        if ( ! isset($challenge) || ! isset($response) || ! isset($public_key) || $challenge == '' || $response == '' || $public_key == '') { return false; }
 
         $public_key = self::fix_key($public_key);
         $challenge_data = self::unpack_data($challenge);
@@ -206,8 +206,8 @@ class TrustAuth
         if (self::verify_encrypted_hash($data['calculated_digest'], $data['encrypted_digest'], $public_key)) {
           if ($data['server_hash'] != $challenge_data['hash']) { throw new TrustAuthException("Hash from client does not match expected hash."); }
           if ($data['domain'] != SITE_DOMAIN) { throw new TrustAuthException("Client expected a different domain name."); }
-          if ($data['time'] + self::TIMEOUT < time()) { throw new TrustAuthException("Response has expired. " . $data['time'] + self::TIMEOUT . " < " . time()); }
-          if ($challenge_data['time'] + self::TIMEOUT < time()) { throw new TrustAuthException("Challenge has expired. " . $challenge_data['time'] + self::TIMEOUT . " < " . time()); }
+          if ($data['time'] + self::TIMEOUT < time()) { throw new TrustAuthException("Response has expired. " . ($data['time'] + self::TIMEOUT) . " < " . time()); }
+          if ($challenge_data['time'] + self::TIMEOUT < time()) { throw new TrustAuthException("Challenge has expired. " . ($challenge_data['time'] + self::TIMEOUT) . " < " . time()); }
           return true;
         } else {
           return false;
