@@ -146,7 +146,20 @@ require_once('Crypt/RSA.php');
 
 define("SITE_DOMAIN", $_SERVER['SERVER_NAME']);
 
-class TrustAuthException extends Exception {}
+class TAException extends Exception {
+  private $user_message = '';
+
+  public function __construct($message, $user_message) {
+    parent::__construct($message);
+    $this->user_message = $user_message;
+  }
+
+  public function get_user_message() { return $this->user_message; }
+}
+class TAResponseExpiredException extends TAException {}
+class TAChallengeExpiredException extends TAException {}
+class TAHashMismatchException extends TAException {}
+class TADomainMismatchException extends TAException {}
 
 class TrustAuth
 {
@@ -204,10 +217,10 @@ class TrustAuth
         $data = self::unpack_data($response);
 
         if (self::verify_encrypted_hash($data['calculated_digest'], $data['encrypted_digest'], $public_key)) {
-          if ($data['server_hash'] != $challenge_data['hash']) { throw new TrustAuthException("Hash from client does not match expected hash."); }
-          if ($data['domain'] != SITE_DOMAIN) { throw new TrustAuthException("Client expected a different domain name."); }
-          if ($data['time'] + self::TIMEOUT < time()) { throw new TrustAuthException("Response has expired. " . ($data['time'] + self::TIMEOUT) . " < " . time()); }
-          if ($challenge_data['time'] + self::TIMEOUT < time()) { throw new TrustAuthException("Challenge has expired. " . ($challenge_data['time'] + self::TIMEOUT) . " < " . time()); }
+          if ($data['server_hash'] != $challenge_data['hash']) { throw new TAHashMismatchException("Hash from client does not match expected hash.", "Hash mismatch. Try logging in again."); }
+          if ($data['domain'] != SITE_DOMAIN) { throw new TADomainMismatchException("Client expected a different domain name.", "Domain mismatch. Try logging in again."); }
+          if ($data['time'] + self::TIMEOUT < time()) { throw new TAResponseExpiredException("Response has expired. " . ($data['time'] + self::TIMEOUT) . " < " . time(), "Response expired. Try logging in again."); }
+          if ($challenge_data['time'] + self::TIMEOUT < time()) { throw new TAChallengeExpireException("Challenge has expired. " . ($challenge_data['time'] + self::TIMEOUT) . " < " . time(), "Challenge expired. Try logging in again."); }
           return true;
         } else {
           return false;
