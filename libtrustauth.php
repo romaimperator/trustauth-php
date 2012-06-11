@@ -167,6 +167,47 @@ class TrustAuth
     const HASH_LENGTH = 32; // in bytes so sha 256 returns 32 bytes
     const TIMEOUT = 30; // the maximum length of time to still accept a challenge or response in seconds
 
+    /**
+     * Outputs the fields required for a form to allow users to register with TrustAuth.
+     *
+     * @param {array} $options an array with option values to override the defaults
+     * @return {string} string of HTML to output to the page.
+     */
+    public static function register_form($options) {
+      $options = array_merge(array(
+        'key_name' => 'ta-key',
+        'use_html5' => true,
+        'button_class' => '',
+      ), $options);
+
+      $str = "<input type=\"hidden\" id=\"trustauth-key\" name=\"" . htmlentities($options['key_name']) . "\"/>\n";
+      if ($options['use_html5']) {
+        $str.= "<input class=\"" . htmlentities($options['button_class']) . "\" type=\"button\" id=\"trustauth-register\" onclick=\"return false\" value=\"Add TrustAuth Key\"/>";
+      } else {
+        $str.= "<button id=\"trustauth-register\" class=\"" . htmlentities($options['button_class']) . "\" onclick=\"return false\">Add TrustAuth Key</button>";
+      }
+      return $str;
+    }
+
+    /**
+     * Outputs the fields required for a form to be authenticated with TrustAuth.
+     *
+     * @param {array} $options an array with option values to override the defaults
+     * @return {string} string of HTML to output to the page.
+     */
+    public static function authenticate_form($options) {
+      $options = array_merge(array(
+        'challenge_name' => 'ta-challenge',
+        'response_name' => 'ta-response',
+      ), $options);
+
+      if ( ! isset($options['challenge'])) { $options['challenge'] = TrustAuth::get_challenge(); }
+
+      $str = "<input type=\"hidden\" id=\"trustauth-challenge\" name=\"" . htmlentities($options['challenge_name']) . "\" value=\"" . $options['challenge'] . "\"/>\n";
+      $str.= "<input type=\"hidden\" id=\"trustauth-response\" name=\"" . htmlentities($options['response_name']) . "\"/>\n";
+      return $str;
+    }
+
     /*
      * This function is to act like a constant array and return the number
      * that corresponds to the correct message type.
