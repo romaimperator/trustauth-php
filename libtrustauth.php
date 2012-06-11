@@ -199,12 +199,14 @@ class TrustAuth
       $options = array_merge(array(
         'challenge_name' => 'ta-challenge',
         'response_name' => 'ta-response',
+        'key_name' => 'ta-key',
       ), $options);
 
       if ( ! isset($options['challenge'])) { $options['challenge'] = TrustAuth::get_challenge(); }
 
       $str = "<input type=\"hidden\" id=\"trustauth-challenge\" name=\"" . htmlentities($options['challenge_name']) . "\" value=\"" . $options['challenge'] . "\"/>\n";
       $str.= "<input type=\"hidden\" id=\"trustauth-response\" name=\"" . htmlentities($options['response_name']) . "\"/>\n";
+      $str.= "<input type=\"hidden\" id=\"trustauth-key\" name=\"" . htmlentities($options['key_name']) . "\"/>\n";
       return $str;
     }
 
