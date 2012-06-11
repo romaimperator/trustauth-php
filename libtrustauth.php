@@ -254,19 +254,30 @@ class TrustAuth
      */
     public static function verify($challenge, $response, $public_key) {
         if ( ! isset($challenge) || ! isset($response) || ! isset($public_key) || $challenge == '' || $response == '' || $public_key == '') { return false; }
+        set_error_handler('TrustAuth::error_handler');
 
         $public_key = self::fix_key($public_key);
         $challenge_data = self::unpack_data($challenge);
         $data = self::unpack_data($response);
+        $result = false;
 
         if (self::verify_encrypted_hash($data['calculated_digest'], $data['encrypted_digest'], $public_key)) {
           if ($data['server_hash'] != $challenge_data['hash']) { throw new TAHashMismatchException("Hash from client does not match expected hash.", "Hash mismatch. Try logging in again."); }
           if ($data['domain'] != SITE_DOMAIN) { throw new TADomainMismatchException("Client expected a different domain name.", "Domain mismatch. Try logging in again."); }
           if ($data['time'] + self::TIMEOUT < time()) { throw new TAResponseExpiredException("Response has expired. " . ($data['time'] + self::TIMEOUT) . " < " . time(), "Response expired. Try logging in again."); }
           if ($challenge_data['time'] + self::TIMEOUT < time()) { throw new TAChallengeExpireException("Challenge has expired. " . ($challenge_data['time'] + self::TIMEOUT) . " < " . time(), "Challenge expired. Try logging in again."); }
-          return true;
+          $result = true;
+        }
+        restore_error_handler();
+        return $result;
+    }
+
+    public static function error_handler($errno, $errstr, $errfile, $errline) {
+        if (!(error_reporting() & $errno)) {
+            // This error code is not included in error_reporting
+            return;
         } else {
-          return false;
+            throw new TAException($errstr, "TrustAuth: There was an internal error: $errstr" . "<br/>If the problem persists, you can post a bug report at <a href=\"https://github.com/romaimperator/trustauth-php/issues\">here</a>.");
         }
     }
 
@@ -276,7 +287,7 @@ class TrustAuth
      *
      * @return random value
      */
-    private static function get_random_value() {
+    public static function get_random_value() {
         return bin2hex(openssl_random_pseudo_bytes(self::CHALLENGE_LENGTH));
     }
 
