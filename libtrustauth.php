@@ -329,7 +329,10 @@ class TrustAuth
     private static function pack_data($type, $data) {
         $b = '';
         if($type == self::MESSAGE_TYPE('challenge')) {
-            $b = pack("C", $type);
+            $b = pack("C", 1);  // Major
+            $b .= pack("C", 0); // Minor
+            $b .= pack("C", 0); // Patch
+            $b .= pack("C", $type);
             $b .= pack("N", $data['time']);
             $encoded_challenge = self::utf8_to_bin($data['challenge']);
             $encoded_domain    = self::utf8_to_bin($data['domain']);
@@ -360,6 +363,18 @@ class TrustAuth
      */
     private static function unpack_data($data) {
         $data_copy = $data;
+        $version = array(
+          'major' => unpack("C", self::hex2bin(substr($data, 0, 2))),
+          'minor' => unpack("C", self::hex2bin(substr($data, 2, 2))),
+          'patch' => unpack("C", self::hex2bin(substr($data, 4, 2))),
+        );
+        $version = array(
+          'major' => $version['major'][1],
+          'minor' => $version['minor'][1],
+          'patch' => $version['patch'][1],
+        );
+        if ($version['major'] != 1 || $version['minor'] != 0 || $version['patch'] != 0) { return array('error' => "Unsupported version number: {$version['major']}.{$version['minor']}.{$version['patch']}"); }
+        $data = substr($data, 6);
         $type = unpack("C", self::hex2bin(substr($data, 0, 2)));
         if ($type[1] == self::MESSAGE_TYPE('response')) {
             $time            = unpack("N", self::hex2bin(substr($data, 2, 8)));
@@ -388,6 +403,7 @@ class TrustAuth
             $calculated_digest = hash("sha256", substr($data_copy, 0, -$digest_length[1] - 4));
 
             return array(
+                'version'           => $version,
                 'type'              => $type[1],
                 'time'              => $meta['time'],
                 'response_length'   => $meta['response_length'],
@@ -420,6 +436,7 @@ class TrustAuth
             $hash = substr($data, 0, self::HASH_LENGTH * 2);
 
             return array(
+                'version'          => $version,
                 'type'             => $type[1],
                 'time'             => $meta['time'],
                 'challenge_length' => $meta['challenge_length'],
