@@ -167,6 +167,49 @@ class TrustAuth
     const HASH_LENGTH = 32; // in bytes so sha 256 returns 32 bytes
     const TIMEOUT = 30; // the maximum length of time to still accept a challenge or response in seconds
 
+    /**
+     * Outputs the fields required for a form to allow users to register with TrustAuth.
+     *
+     * @param {array} $options an array with option values to override the defaults
+     * @return {string} string of HTML to output to the page.
+     */
+    public static function register_form($options) {
+      $options = array_merge(array(
+        'key_name' => 'ta-key',
+        'use_html5' => true,
+        'button_class' => '',
+      ), $options);
+
+      $str = "<input type=\"hidden\" id=\"trustauth-key\" name=\"" . htmlentities($options['key_name']) . "\"/>\n";
+      if ($options['use_html5']) {
+        $str.= "<input class=\"" . htmlentities($options['button_class']) . "\" type=\"button\" id=\"trustauth-register\" onclick=\"return false\" value=\"Add TrustAuth Key\"/>";
+      } else {
+        $str.= "<button id=\"trustauth-register\" class=\"" . htmlentities($options['button_class']) . "\" onclick=\"return false\">Add TrustAuth Key</button>";
+      }
+      return $str;
+    }
+
+    /**
+     * Outputs the fields required for a form to be authenticated with TrustAuth.
+     *
+     * @param {array} $options an array with option values to override the defaults
+     * @return {string} string of HTML to output to the page.
+     */
+    public static function authenticate_form($options) {
+      $options = array_merge(array(
+        'challenge_name' => 'ta-challenge',
+        'response_name' => 'ta-response',
+        'key_name' => 'ta-key',
+      ), $options);
+
+      if ( ! isset($options['challenge'])) { $options['challenge'] = TrustAuth::get_challenge(); }
+
+      $str = "<input type=\"hidden\" id=\"trustauth-challenge\" name=\"" . htmlentities($options['challenge_name']) . "\" value=\"" . $options['challenge'] . "\"/>\n";
+      $str.= "<input type=\"hidden\" id=\"trustauth-response\" name=\"" . htmlentities($options['response_name']) . "\"/>\n";
+      $str.= "<input type=\"hidden\" id=\"trustauth-key\" name=\"" . htmlentities($options['key_name']) . "\"/>\n";
+      return $str;
+    }
+
     /*
      * This function is to act like a constant array and return the number
      * that corresponds to the correct message type.
@@ -211,19 +254,30 @@ class TrustAuth
      */
     public static function verify($challenge, $response, $public_key) {
         if ( ! isset($challenge) || ! isset($response) || ! isset($public_key) || $challenge == '' || $response == '' || $public_key == '') { return false; }
+        set_error_handler('TrustAuth::error_handler');
 
         $public_key = self::fix_key($public_key);
         $challenge_data = self::unpack_data($challenge);
         $data = self::unpack_data($response);
+        $result = false;
 
         if (self::verify_encrypted_hash($data['calculated_digest'], $data['encrypted_digest'], $public_key)) {
           if ($data['server_hash'] != $challenge_data['hash']) { throw new TAHashMismatchException("Hash from client does not match expected hash.", "Hash mismatch. Try logging in again."); }
           if ($data['domain'] != SITE_DOMAIN) { throw new TADomainMismatchException("Client expected a different domain name.", "Domain mismatch. Try logging in again."); }
           if ($data['time'] + self::TIMEOUT < time()) { throw new TAResponseExpiredException("Response has expired. " . ($data['time'] + self::TIMEOUT) . " < " . time(), "Response expired. Try logging in again."); }
           if ($challenge_data['time'] + self::TIMEOUT < time()) { throw new TAChallengeExpireException("Challenge has expired. " . ($challenge_data['time'] + self::TIMEOUT) . " < " . time(), "Challenge expired. Try logging in again."); }
-          return true;
+          $result = true;
+        }
+        restore_error_handler();
+        return $result;
+    }
+
+    public static function error_handler($errno, $errstr, $errfile, $errline) {
+        if (!(error_reporting() & $errno)) {
+            // This error code is not included in error_reporting
+            return;
         } else {
-          return false;
+            throw new TAException($errstr, "TrustAuth: There was an internal error: $errstr" . "<br/>If the problem persists, you can post a bug report at <a href=\"https://github.com/romaimperator/trustauth-php/issues\">here</a>.");
         }
     }
 
@@ -233,7 +287,7 @@ class TrustAuth
      *
      * @return random value
      */
-    private static function get_random_value() {
+    public static function get_random_value() {
         return bin2hex(openssl_random_pseudo_bytes(self::CHALLENGE_LENGTH));
     }
 
@@ -329,7 +383,10 @@ class TrustAuth
     private static function pack_data($type, $data) {
         $b = '';
         if($type == self::MESSAGE_TYPE('challenge')) {
-            $b = pack("C", $type);
+            $b = pack("C", 1);  // Major
+            $b .= pack("C", 0); // Minor
+            $b .= pack("C", 0); // Patch
+            $b .= pack("C", $type);
             $b .= pack("N", $data['time']);
             $encoded_challenge = self::utf8_to_bin($data['challenge']);
             $encoded_domain    = self::utf8_to_bin($data['domain']);
@@ -360,6 +417,18 @@ class TrustAuth
      */
     private static function unpack_data($data) {
         $data_copy = $data;
+        $version = array(
+          'major' => unpack("C", self::hex2bin(substr($data, 0, 2))),
+          'minor' => unpack("C", self::hex2bin(substr($data, 2, 2))),
+          'patch' => unpack("C", self::hex2bin(substr($data, 4, 2))),
+        );
+        $version = array(
+          'major' => $version['major'][1],
+          'minor' => $version['minor'][1],
+          'patch' => $version['patch'][1],
+        );
+        if ($version['major'] != 1 || $version['minor'] != 0 || $version['patch'] != 0) { return array('error' => "Unsupported version number: {$version['major']}.{$version['minor']}.{$version['patch']}"); }
+        $data = substr($data, 6);
         $type = unpack("C", self::hex2bin(substr($data, 0, 2)));
         if ($type[1] == self::MESSAGE_TYPE('response')) {
             $time            = unpack("N", self::hex2bin(substr($data, 2, 8)));
@@ -388,6 +457,7 @@ class TrustAuth
             $calculated_digest = hash("sha256", substr($data_copy, 0, -$digest_length[1] - 4));
 
             return array(
+                'version'           => $version,
                 'type'              => $type[1],
                 'time'              => $meta['time'],
                 'response_length'   => $meta['response_length'],
@@ -420,6 +490,7 @@ class TrustAuth
             $hash = substr($data, 0, self::HASH_LENGTH * 2);
 
             return array(
+                'version'          => $version,
                 'type'             => $type[1],
                 'time'             => $meta['time'],
                 'challenge_length' => $meta['challenge_length'],
