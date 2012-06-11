@@ -144,8 +144,6 @@
 
 require_once('Crypt/RSA.php');
 
-define("SITE_DOMAIN", $_SERVER['SERVER_NAME']);
-
 class TAException extends Exception {
   private $user_message = '';
 
@@ -202,7 +200,7 @@ class TrustAuth
         'key_name' => 'ta-key',
       ), $options);
 
-      if ( ! isset($options['challenge'])) { $options['challenge'] = TrustAuth::get_challenge(); }
+      if ( ! isset($options['challenge'])) { $options['challenge'] = TrustAuth::get_challenge($_SERVER['SERVER_NAME']); }
 
       $str = "<input type=\"hidden\" id=\"trustauth-challenge\" name=\"" . htmlentities($options['challenge_name']) . "\" value=\"" . $options['challenge'] . "\"/>\n";
       $str.= "<input type=\"hidden\" id=\"trustauth-response\" name=\"" . htmlentities($options['response_name']) . "\"/>\n";
@@ -228,16 +226,16 @@ class TrustAuth
     /*
      * Generates the challenge message for the client addon.
      *
-     * @param user the array of user info, public key, random
+     * @param string $domain the full domain name for this server (i.e. maps.google.com)
      * @returns array of status, json return message and the server values
      *     which will be needed later
      */
-    public static function get_challenge() {
+    public static function get_challenge($domain) {
         return self::pack_data(
             self::MESSAGE_TYPE('challenge'),
             array(
                 'challenge' => self::get_random_value(),
-                'domain'    => SITE_DOMAIN,
+                'domain'    => $domain,
                 'time'      => time(),
             )
         );
